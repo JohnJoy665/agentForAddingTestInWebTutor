@@ -1,0 +1,384 @@
+// переменные из агента
+var _nameTest = Param.name; // название теста
+var _codeTest = Param.code; // код теста
+var _successScorePercent = Param.success_score; // процент от общего числа вопросов для прохождения теста
+var _duration = Param.duration; // продолжительность в минутах. Если нет = не оценивается
+var _attemptNum = Param.attempts_num; // кол-во попыток. Если нет = 1
+checkNewLine = true
+allTest = [];
+var instruction = ['']
+
+// ф-ия округления до первого числа
+function roundToFirstSign(countOfQuestions) {
+    scoreEachQuest = 1 / OptReal(countOfQuestions)
+    scoreToString = StrReal(scoreEachQuest)
+    arrOfScore = scoreToString.split('.')
+    afterCommaElement = arrOfScore[1]
+    firstAfterComma = StrCharRangePos(afterCommaElement, 0, 1)
+    secondAfterCommaElement = StrCharRangePos(afterCommaElement, 1, 2)
+    if (secondAfterCommaElement >= 5 && secondAfterCommaElement != '') {
+        firstAfterComma + 1
+    }
+    result = arrOfScore[0] + '.' + firstAfterComma + '' + secondAfterCommaElement
+    numResult = OptReal(result)
+    return numResult
+}
+
+
+// функции записи данных в объект
+try {
+    objQuestion = {};
+    answers = [];
+    correctAnswers = [];
+    questPhotos = [];
+
+    function checkQuestion(objQuestion) {
+        objQuestion.typeQuestion = '';
+        countOfAnswers = ArrayCount(objQuestion.answerOptions);
+        countCorrecAnswers = 0
+        // alert(ArrayCount(objQuestion.answerOptions)) // использовать эту переменную для поиска кол-ва вопросов и ответов
+        if (
+            objQuestion.sectionTitle == '' ||
+            objQuestion.sectionNumQ == '' ||
+            objQuestion.questionTitle == ''
+        ) {
+            return
+        }
+
+        for (i = 0; i < objQuestion.answerOptions.length; i++) {
+            if (objQuestion.isCorrectAnswer[i] != '') {
+                countCorrecAnswers++
+            }
+            if (StrContains(objQuestion.isCorrectAnswer[i], '!!')) {
+                objQuestion.typeQuestion = 'gap_fill'
+            }
+            if (StrContains(objQuestion.answerOptions[i], '==')) {
+                objQuestion.typeQuestion = 'match_item'
+            }
+        }
+        // если нет вариантов вопросов или есть один вариант вопроса и он не текстовый = не добавлять вопрос в выборку
+        if (countOfAnswers == 0 || (countOfAnswers == 1 && objQuestion.typeQuestion != 'gap_fill')) {
+            return
+        }
+        // если правильных более одного - то это множественный выбор 
+        if (countCorrecAnswers > 1 && objQuestion.typeQuestion != 'gap_fill') {
+            objQuestion.typeQuestion = 'multiple_response'
+        };
+        // если правильных нет и это не текстовый вопрос и не соответствие, то это ранжирование
+        if (countCorrecAnswers == 0 && objQuestion.typeQuestion != 'gap_fill' && objQuestion.typeQuestion != 'match_item') {
+            objQuestion.typeQuestion = 'order'
+        };
+        // если только один правильный - то это единственный выбор
+        if (countCorrecAnswers == 1 && objQuestion.typeQuestion != 'gap_fill') {
+            objQuestion.typeQuestion = 'multiple_choice'
+        };
+        objQuestion.countCorrecAnswers = countCorrecAnswers;
+        return objQuestion
+    }
+
+
+    // записываем данные строки в объект
+    function setQuestionObj(columnTitle, currentCellVallue, array, l, c, countOfActiveColumns, ) {
+        if (checkNewLine) {
+            objQuestion = new Object();
+            answers = new Array;
+            correctAnswers = new Array;
+            questPhotos = new Array;
+        }
+        checkNewLine = false
+        if (c >= 0 && c < countOfActiveColumns - 1) {
+            switch (columnTitle) {
+                case 'название раздела':
+                    objQuestion.sectionTitle = currentCellVallue
+                    break;
+                case 'выборка вопросов из раздела':
+                    objQuestion.sectionNumQ = currentCellVallue
+                    break;
+                case 'формулировка вопроса':
+                    objQuestion.questionTitle = currentCellVallue;
+                    break;
+                case 'фото в вопросе':
+                    if (currentCellVallue != '') {
+                        objQuestion.questionPhoto = currentCellVallue;
+                    } else {
+                        objQuestion.questionPhoto = false
+                    }
+                    break;
+                case 'вариант':
+                    if (currentCellVallue != '') {
+                        answers.push(currentCellVallue);
+                        objQuestion.answerOptions = answers; // формирование всех вариантов в виде массива. (Попадают все значения, в том числе и пустые!?)
+                        correctAnswers.push(array[l][c + 1]);
+                        objQuestion.isCorrectAnswer = correctAnswers; // формирование всех условий (правильно, неправильно) в виде массива
+                        questPhotos.push(array[l][c + 2]);
+                        objQuestion.questPhoto = questPhotos; // формирование всех фото для вопросов
+                    }
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            rightQuestion = checkQuestion(objQuestion); // Отправляем объект с данными на определение типа вопроса
+            if (rightQuestion != undefined) {
+                allTest.push(objQuestion); // добавляем все вопросы в массив
+            } else {
+                alert('Вопрос с формулировкой = ' + objQuestion.questionTitle + ' сформирован неверно и не попадет в выборку')
+            }
+        }
+    }
+} catch (err) {
+    alert('В функциях проверок ошибка = ' + err)
+}
+
+// Начало - проверка данных из EXCEL, запуск ф-ии записи данных в объект
+try {
+    // Проверка данных в настройках агента
+    if (_nameTest == '' || _codeTest == '' || _successScorePercent == '') {
+        throw 'Не заполненно одно из обязательных полей в общих сведениях'
+    }
+
+    // Проверка существования теста с таким кодом
+    checkTestCode = ArrayOptFirstElem(XQuery("for $elem in assessments where $elem/code= '" + _codeTest + "' return $elem"));
+    if (checkTestCode != undefined) {
+        throw 'Тест с таким кодом существует в системе'
+    }
+
+    // Проверка правильности формата EXCEL и наполненности данных в файле
+    excelFileUrl = Screen.AskFileOpen('', 'Выбери файл&#09;*.*');
+    checkFile = excelFileUrl.split('.');
+    if (checkFile[checkFile.length - 1] != 'xlsx' && checkFile[checkFile.length - 1] != 'xls') {
+        throw 'Загрузите файл Excel в формате xls или xlsx'
+    }
+    sourceList = OpenDoc(excelFileUrl, 'format=excel');
+    linesArray = ArrayFirstElem(sourceList.TopElem);
+    if (linesArray[0][0] == '' && ArrayCount(linesArray) <= 1) {
+        throw 'Нет данных в файле'
+    }
+
+    // начать проход по строкам
+    var countOfActiveColumns = ArrayCount(linesArray[1]) // количество колонок в строке
+    var countOfActiveLines = ArrayCount(linesArray) // количество строк
+    for (l = 1; l < countOfActiveLines; l++) { // проход вниз начиная со второй строки
+        checkNewLine = true // флажок - новая линия
+        for (c = 0; c < countOfActiveColumns; c++) { // проход вправо
+
+            // далее запуск формулы на каждой ячейке
+            currentCellVallue = linesArray[l][c]; // значение текущей ячейкм
+            columnTitle = StrLowerCase(linesArray[0][c]) // значение заголовка
+            currentQustion = setQuestionObj(columnTitle, currentCellVallue, linesArray, l, c, countOfActiveColumns);
+        }
+    }
+} catch (err) {
+    alert('Произошла ошибка при считывании данных с файла = ' + err)
+}
+
+// работа с массивом сформированных вопросов. Создание вопросов
+try {
+    if (ArrayCount(allTest) == 0) {
+        throw 'В файле нет валидных вопросов'
+    }
+    arrSections = [];
+    sectionsObject = {};
+    sectionNumber = 0;
+
+    // Пробежимся по объекту с вопросами
+    for (_v = 0; ArrayCount(allTest) > _v; _v++) {
+
+        if (_v == 0) {
+            // если это первый вопрос
+            sectionsObject = new Object();
+            sectionsObject.sectionName = allTest[_v].sectionTitle;
+            sectionsObject.questNum = 1;
+            sectionNumber++
+            sectionsObject.codeSection = 'chap.' + sectionNumber;
+            sectionsObject.questionSelectNum = allTest[_v].sectionNumQ;
+            sectionsObject.sectionNumber = sectionNumber;
+            arrSections.push(sectionsObject)
+            curentQuestionCode = _codeTest + '_' + sectionsObject.codeSection + '_' + sectionsObject.questNum;
+        } else {
+            // если это не первый вопрос
+            newSection = true
+            for (section in arrSections) {
+                // если такой раздел уже есть в списке, возьми этот объект, добавь ему 1 к счетчику вопросов
+                if (section.sectionName == allTest[_v].sectionTitle) {
+                    newSection = false
+                    section.questNum++
+                    curentQuestionCode = _codeTest + '_' + section.codeSection + '_' + section.questNum;
+                }
+            }
+            // если такого раздела нет
+            if (newSection) {
+                sectionsObject = new Object();
+                sectionsObject.sectionName = allTest[_v].sectionTitle;
+                sectionsObject.questNum = 1;
+                sectionNumber++
+                sectionsObject.codeSection = 'chap.' + sectionNumber;
+                sectionsObject.questionSelectNum = allTest[_v].sectionNumQ;
+                sectionsObject.sectionNumber = sectionNumber;
+                arrSections.push(sectionsObject)
+                curentQuestionCode = _codeTest + '_' + sectionsObject.codeSection + '_' + sectionsObject.questNum;
+            }
+        }
+
+
+        // создаем вопрос
+        newQuestionObj = tools.new_doc_by_name('item', false);
+        questionDoc = newQuestionObj.TopElem;
+        questionDoc.code = curentQuestionCode;
+        questionDoc.type_id = allTest[_v].typeQuestion;
+        questionDoc.title = allTest[_v].questionTitle;
+        questionDoc.order = 'Random'
+        questionDoc.question_points = '1'
+        intCountCorrecAnswers = OptReal(allTest[_v].countCorrecAnswers);
+        if (intCountCorrecAnswers > 1) {
+            scoreRounding = roundToFirstSign(intCountCorrecAnswers)
+        }
+        if (allTest[_v].questionPhoto) {
+            _url = LoadFileData(allTest[_v].questionPhoto)
+            _urlName = UrlFileName(allTest[_v].questionPhoto)
+            questionDoc.image.name = _urlName;
+            questionDoc.image.data = _url;
+            questionDoc.Doc.SetChanged(true);
+        }
+
+        indexAnswer = 0;
+        for (_a = 0; ArrayCount(allTest[_v].answerOptions) > _a; _a++) {
+            if (allTest[_v].answerOptions[_a] != '') {
+                arrAnswers = questionDoc.answers.AddChild();
+                switch (allTest[_v].typeQuestion) {
+                    case 'multiple_choice':
+                        questionDoc.title = allTest[_v].questionTitle;
+                        questionDoc.question_text = allTest[_v].questionTitle;
+                        arrAnswers.text = allTest[_v].answerOptions[_a]
+                        if (allTest[_v].isCorrectAnswer[_a] != '') {
+                            arrAnswers.is_correct_answer = '1'
+                        }
+                        if (allTest[_v].questPhoto[_a] != '') {
+                            _url = LoadFileData(allTest[_v].questPhoto[_a])
+                            _urlName = UrlFileName(allTest[_v].questPhoto[_a])
+                            arrAnswers.image.name = _urlName
+                            arrAnswers.image.data = _url;
+                            arrAnswers.Doc.SetChanged(true);
+                        }
+                        break;
+                    case 'multiple_response':
+                        if (allTest[_v].isCorrectAnswer[_a] != '') {
+                            arrAnswers.is_correct_answer = '1'
+                            if (intCountCorrecAnswers * scoreRounding != 1) {
+                                indexAnswer++
+                                if (indexAnswer == intCountCorrecAnswers) {
+                                    _coof = 1 - (intCountCorrecAnswers * scoreRounding);
+                                    arrAnswers.ws_score = (scoreRounding + _coof);
+                                } else {
+                                    arrAnswers.ws_score = (scoreRounding);
+                                }
+                            } else {
+                                arrAnswers.ws_score = (scoreRounding);
+                            }
+                        }
+                        arrAnswers.text = allTest[_v].answerOptions[_a];
+                        questionDoc.title = allTest[_v].questionTitle + ' Выберите ' + allTest[_v].countCorrecAnswers + ' варианта(ов).';
+                        questionDoc.question_text = allTest[_v].questionTitle + ' Выберите ' + allTest[_v].countCorrecAnswers + ' варианта(ов).';
+                        questionDoc.maxnumber = allTest[_v].countCorrecAnswers;
+                        break;
+                    case 'order':
+                        arrAnswers.text = allTest[_v].answerOptions[_a]
+                        questionDoc.title = allTest[_v].questionTitle + ' Поставьте ответы в правильном порядке.';
+                        questionDoc.question_text = allTest[_v].questionTitle + ' Поставьте ответы в правильном порядке.';
+                        break;
+                    case 'gap_fill':
+                        questionDoc.title = allTest[_v].questionTitle + ' Впишите ответ.';
+                        questionDoc.question_text = allTest[_v].questionTitle + ' Впишите ответ.';
+                        strAnswer = StrReplace(allTest[_v].isCorrectAnswer[_a], "!", "")
+                        arrConditions = arrAnswers.conditions.AddChild();
+                        arrAnswers.text = allTest[_v].answerOptions[_a]
+                        arrConditions.value = strAnswer;
+                        arrConditions.grading_option_id = '='
+                        arrConditions.sentence_option_id = 'equal'
+                        break;
+                    case 'match_item':
+                        questionDoc.title = allTest[_v].questionTitle + ' Сопоставьте варианты.';
+                        questionDoc.question_text = allTest[_v].questionTitle + ' Сопоставьте варианты.';
+                        arrMatch = Trim(allTest[_v].answerOptions[_a]).split('==');
+                        arrAnswers.text = arrMatch[0]
+                        arrValue = arrAnswers.values.AddChild();
+                        arrValue.text = arrMatch[1]
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        newQuestionObj.BindToDb();
+        newQuestionObj.Save();
+    }
+} catch (err) {
+    alert('Произошла ошибка при создании вопросов в WT = ' + err)
+}
+
+// работа с массивом разделов, создание теста
+try {
+    if (ArrayCount(arrSections) <= 0) {
+        throw 'В массиве разделов нет данных'
+    }
+    // подсчет загруженных вопроосов
+    msgAboutTime = ''
+
+    var _items = XQuery("for $elem in items where contains($elem/code, '" + _codeTest + "') return $elem");
+
+    countItems = ArrayCount(_items);
+    persentScore = ((Real(countItems)) / 100) * (Real(_successScorePercent));
+    newTestObj = tools.new_doc_by_name('assessment', false);
+    testDoc = newTestObj.TopElem;
+    testDoc.code = _codeTest;
+    testDoc.title = _nameTest;
+    if (_duration != '') {
+        testDoc.duration = _duration;
+        msgAboutTime = ' Тест ограничен по времени и длится не более ' + _duration + ' минут. Счетчик времени находится в правом верхнем углу. '
+    } else {
+        msgAboutTime = ' Тест не ограничен по времени. '
+    }
+    testDoc.passing_score = Math.round(persentScore);
+    testDoc.feedback_passed = 'Поздравляем! Вы успешно прошли тестирование. Можете закрыть окно тестирования'
+    testDoc.feedback_failed = 'К сожалению тест не сдан. Повторите материал и попробуйте снова. Можете закрыть окно тестирования'
+    testDoc.objectives.candidate = 'Данный тест содержит ' + countItems + ' вопросов(а).' + msgAboutTime + 'Для успешного завершения теста необходимо набрать ' + Math.round(persentScore) + ' баллов (' + _successScorePercent + '% правильных ответов). Ответы на вопросы могут быть разного типа: вопросы с единственным выбором и на ранжирование оцениваются в 1 балл. Вопросы с множественым выбором также оцениваются в 1 балл. Чтобы его заработать, нужно отметить все правильные варианты ответа. Не переживайте, даже если вы отметили не все правильные варианты, вы сможете заработать часть балла в зависимости от количества отмеченных правильных вариантов. Если вопрос имеет 2 правильных ответа, то каждый оценивается в 0.5 балла. Если 3 правильных ответа, то каждый правильный отмеченный вариант оценивается в 0.33 балла. Если вы отметили неправильный вариант, вы не теряете баллов. Если вы отметили больше вариантов чем нужно, система выведет предупреждение'
+    testDoc.is_open = '1';
+    testDoc.display_correct_answer_in_report = '0';
+    testDoc.display_answers_in_report = '0';
+    testDoc.display_result_report = '1';
+    testDoc.display_result = '1'
+    testDoc.test_finish_redirect = 'main';
+    testDoc.player.rubric_display_type = 'ass';
+
+    for (_arrSection in arrSections) {
+        _newSection = testDoc.sections.AddChild();
+        _newSection.id = _arrSection.sectionNumber;
+        _newSection.code = _arrSection.codeSection;
+        _newSection.title = _arrSection.sectionName;
+        _newSection.display_correct_answer = '0';
+        _newSection.not_display_feedback = '0';
+        _newSection.not_disp_last_attempt = '0';
+        _newSection.selection_ordering.order = 'Random';
+
+        if (OptInt(_arrSection.questionSelectNum) == undefined) {
+            _newSection.selection_ordering.select_id = 'all'
+        } else {
+            _newSection.selection_ordering.select_id = 'num_generate'
+            _newSection.selection_ordering.select_num = _arrSection.questionSelectNum
+        }
+
+        arrQuest = XQuery("for $elem in items where contains($elem/code, '" + _codeTest + "') and contains($elem/code, '" + _arrSection.codeSection + "') return $elem")
+
+        for (_questDoc in arrQuest) {
+            _newQuest = _newSection.items.AddChild();
+            _newQuest.id = _questDoc.id;
+            _newQuest.title = _questDoc.question_text
+        }
+    }
+
+    newTestObj.BindToDb();
+    newTestObj.Save();
+
+} catch (err) {
+    alert('Произошла ошибка при создании теста в WT = ' + err)
+}
